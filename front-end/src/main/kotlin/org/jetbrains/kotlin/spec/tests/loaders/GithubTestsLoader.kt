@@ -4,7 +4,12 @@ import js.externals.jquery.JQueryAjaxSettings
 import js.externals.jquery.JQueryPromise
 import js.externals.jquery.JQueryXHR
 import js.externals.jquery.`$`
-import org.jetbrains.kotlin.spec.utils.TestArea
+import org.jetbrains.kotlin.spec.entities.Test
+import org.jetbrains.kotlin.spec.entities.TestContainer
+import org.jetbrains.kotlin.spec.entities.TestMapData
+import org.jetbrains.kotlin.spec.entities.TestPath
+import org.jetbrains.kotlin.spec.entities.testElement.TestElementInfo
+import org.jetbrains.kotlin.spec.testArea.TestArea
 import org.jetbrains.kotlin.spec.utils.format
 import kotlin.browser.window
 import kotlin.js.Promise
@@ -22,24 +27,64 @@ interface GithubTestsLoader {
 
         fun getBranch() = window.localStorage.getItem("spec-tests-branch") ?: DEFAULT_BRANCH
 
-        fun loadFileFromRawGithub(
+        fun loadTestFileFromRawGithub(
                 path: String,
                 testPathInSpec: String? = null,
-                testType: TestFileType,
-                customFolder: String? = null
-        ): Promise<Map<String, Any>> {
+                customFolder: String? = null,
+                testElementInfo: TestElementInfo,
+                testPath: TestPath,
+                testArea: TestArea
+        ): Promise<Test> {
+            println("!!loadTestFileFromRawGithub")
+
             return Promise { requestResolve, requestReject ->
-                val resultMap = mutableMapOf<String, Any>()
+                val testContainerMap = mutableMapOf<String, String>()
 
-                val testsPaths = TestsPaths(customFolder, path, testPathInSpec)
-                val queryDiagnostics: JQueryPromise<Unit> = getQuery(TestArea.DIAGNOSTICS, resultMap, testType, requestReject, testsPaths)
-                val queryCodegenBox: JQueryPromise<Unit> = getQuery(TestArea.CODEGEN_BOX, resultMap, testType, requestReject, testsPaths)
+                val testsPaths = TestsPaths(customFolder, path, testPathInSpec) //todo get rid of ?
 
-                `$`.`when`(queryCodegenBox, queryDiagnostics).then({ _: Any?, _: Any ->
-                    requestResolve(resultMap)
+                val queryForTestArea: JQueryPromise<Unit> = getQueryForTest(testContainerMap, requestReject, testsPaths)
+
+                `$`.`when`(queryForTestArea).then({ _: Any?, _: Any ->
+                    val testContainer = TestContainer(
+                            content = testContainerMap["content"]!!,
+                            testArea = testArea)
+//                    println("testPath"+testPath.toString())
+                    requestResolve(Test(testElementInfo, testContainer, testPath))
                 })
             }
         }
+
+        fun loadTestMapFileFromRawGithub(
+                path: String,
+                testPathInSpec: String? = null,
+                testType: TestFileType,
+                customFolder: String? = null,
+                testAreasToLoad: ArrayList<TestArea>
+        ): Promise<MutableMap<TestArea, TestMapData>> {
+            return Promise { requestResolve, requestReject ->
+                val resultMap = mutableMapOf<TestArea, TestMapData>()
+
+                val testsPaths = TestsPaths(customFolder, path, testPathInSpec)
+
+                val querySet = mutableSetOf<JQueryPromise<Unit>>()
+                testAreasToLoad.forEach { testArea ->
+                    querySet.add(
+                            getQueryForTestMap(testArea, resultMap, testType, requestReject, testsPaths)
+                    )
+                }
+
+                val queryArray = querySet.toTypedArray()
+                `$`.`when`(*queryArray)
+                        .then({ _: Any?, _: Any ->
+                            //     println("loadTestMapFileFromRawGithub succeed resultMap.size=" + resultMap.size)
+                            requestResolve(resultMap)
+                        }, {
+                            //  println("loadTestMapFileFromRawGithub fail resultMap.size=" + resultMap.size)
+                            requestResolve(resultMap)
+                        })
+            }
+        }
+
 
         class TestsPaths(
                 val customFolder: String?,
@@ -54,23 +99,48 @@ interface GithubTestsLoader {
                     TestFileType.IMPLEMENTATION_TEST -> "{1}/{2}/{3}".format(RAW_GITHUB_URL, getBranch(), path)
                 }
 
-        private fun getQuery(
+        private fun getFullPathForTest(path: String) = "{1}/{2}/{3}".format(RAW_GITHUB_URL, getBranch(), path)
+
+        private fun getQueryForTestMap(
                 testArea: TestArea,
-                resultMap: MutableMap<String, Any>,
+                resultMap: MutableMap<TestArea, TestMapData>,
                 testType: TestFileType,
                 requestReject: (Throwable) -> Unit,
                 testsPaths: TestsPaths
-        ) = `$`.ajax(getFullPath(testType, testArea, testsPaths.customFolder, testsPaths.path),
+        ): JQueryPromise<Unit> {
+
+
+            return `$`.ajax(getFullPath(testType, testArea, testsPaths.customFolder, testsPaths.path),
+                    jQueryAjaxSettings { /*requestReject(Exception())*/ }).then(
+                    doneFilter = { response: Any?, _: Any ->
+                        //println("content:-->" + response.toString())
+                        println("-------------")
+                        //println("content Area :-->" + testArea.path)
+                        // println("contentPath:-->" + (testsPaths.testPathInSpec ?: testsPaths.path))
+                        // println("fullPath:-->" + getFullPath(testType, testArea, testsPaths.customFolder, testsPaths.path))
+                        val testMapData = TestMapData(content = response.toString(), testArea = testArea)
+                        resultMap[testArea] = testMapData
+                        //  println("getQueryForTestMap: resultMap.size =" + resultMap.size + " testArea=" + testArea.path)
+
+                    }
+            )
+        }
+
+        private fun getQueryForTest(
+                testContainerMap: MutableMap<String, String>,
+                requestReject: (Throwable) -> Unit,
+                testsPaths: TestsPaths
+        ) = `$`.ajax(getFullPathForTest(testsPaths.path),
                 jQueryAjaxSettings { requestReject(Exception()) }).then(
-                { response: Any?, _: Any ->
-                    resultMap += Pair(testArea.content, response.toString())
-                    resultMap += Pair(testArea.contentPath, (testsPaths.testPathInSpec ?: testsPaths.path))
+                { response: Any?, reject: Any ->
+                    testContainerMap["content"] = response.toString()
+                    testContainerMap["contentPath"] = (testsPaths.testPathInSpec ?: testsPaths.path)
                 },
                 { }
         )
 
         private fun jQueryAjaxSettings(requestReject: (Throwable) -> Unit): JQueryAjaxSettings {
-            return object : JQueryAjaxSettings {
+            return object : JQueryAjaxSettings { //TODO here?
                 override var cache: Boolean?
                     get() = false
                     set(_) {}

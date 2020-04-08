@@ -2,6 +2,9 @@ package org.jetbrains.kotlin.spec.tests
 
 import js.externals.jquery.JQuery
 import js.externals.jquery.`$`
+import org.jetbrains.kotlin.spec.entities.SentenceTestSet
+import org.jetbrains.kotlin.spec.entities.Test
+import org.jetbrains.kotlin.spec.entities.TestCase
 import org.jetbrains.kotlin.spec.utils.*
 import kotlin.js.Promise
 import kotlin.js.json
@@ -44,17 +47,17 @@ class SpecTestsViewer {
         private const val SAMPLE_WRAP_CODE = "//sampleStart\n{1}\n//sampleEnd"
     }
 
-    private lateinit var currentSentenceTests: Map<String, Map<String, Map<String, Map<String, String>>>>
+    private lateinit var currentSentenceTests: SentenceTestSet
     private lateinit var testPopup: Popup
 
-    private fun insertCode(testCase: Map<String, String>, helperFilesContent: List<Map<String, Any>>? = null) {
+    private fun insertCode(testCaseCode: TestCase, helperFilesContent: List<Map<String, Any>>? = null) {
         val code = StringBuilder()
 
         helperFilesContent?.forEach { helperFile ->
-            code.append("${helperFile[TestArea.DIAGNOSTICS.content]}\n\n")
+           //todo fix code.append("${helperFile[TestAreaEnum.DIAGNOSTICS.content]}\n\n")
         }
 
-        code.append(SAMPLE_WRAP_CODE.format(testCase["code"] ?: return))
+        code.append(SAMPLE_WRAP_CODE.format(testCaseCode.code ?: return))
         code.append(MAIN_FUN_CODE)
 
         `$`(TEST_CODE_WRAPPER_SELECTOR).html(TEST_CODE_TEMPLATE.format(code.toString().escapeHtml()))
@@ -65,13 +68,14 @@ class SpecTestsViewer {
         ))
     }
 
-    private fun showTestCaseCode(test: Map<String, String>, helperFilesContent: List<Map<String, Any>>? = null) {
+    private fun showTestCaseCode(test: Test, helperFilesContent: List<Map<String, Any>>? = null) {
         `$`(TEST_CASE_INFO_SELECTOR).remove()
-        `$`(TESTS_VIEWER_SELECTOR).append(TEST_VIEWER_BODY_TEMPLATE.format(test["description"] ?: return))
+        `$`(TESTS_VIEWER_SELECTOR).append(TEST_VIEWER_BODY_TEMPLATE.format(test.testElementInfo.description))
 
-        val testCases = test["cases"].unsafeCast<List<Map<String, String>>>()
+        val testCases = test.testContainer.testCases
 
-        insertCode(testCases[0], helperFilesContent)
+        insertCode(testCases.first(), helperFilesContent)
+        // insertCode(testCases[0], helperFilesContent)
 
         if (testCases.size == 1) {
             `$`(NEXT_TESTCASE_SELECTOR).addClass("disabled")
@@ -81,16 +85,22 @@ class SpecTestsViewer {
     private fun getHelpers(helperNames: List<String>): Promise<Array<out Map<String, Any>>> {
         val helperFilesPromises = mutableListOf<Promise<Map<String, Any>>>()
 
-        helperNames.forEach { helperName ->
-            helperFilesPromises.add(SpecTestsLoader.loadHelperFile(helperName))
-        }
+//        helperNames.forEach { helperName ->
+//            helperFilesPromises.add(SpecTestsLoader.loadHelperFile(helperName))
+//        } todo fix
 
         return Promise.all(helperFilesPromises.toTypedArray())
     }
 
     fun showViewer(sentenceElement: JQuery) {
+        println("!!!!!!!showViewer!!!!!!")
         val tests =
-                sentenceElement.data("tests").unsafeCast<Map<String, Map<String, Map<String, Map<String, String>>>>>()
+                sentenceElement.data("tests").unsafeCast<SentenceTestSet>()
+
+//        tests.loadedTestAreas.forEach { map ->
+//            println("map.key.path " + map.key.path + "  map.value.size" + map.value.size)
+//        }
+
         val sentenceText = "sentence {1}".format(sentenceElement.clone().children(".number-info").text())
 
         currentSentenceTests = tests
@@ -105,23 +115,31 @@ class SpecTestsViewer {
 
         `$`(TEST_AREA_OPTION_SELECTOR).each { _, el ->
             val testArea = `$`(el)
-            if (testArea.attr("value") !in tests) {
+
+
+            if (tests.getTestsByTestArea(testArea.attr("value")) == null) {
                 testArea.remove()
             }
         }
+
         `$`(TEST_AREA_SELECTOR).`val`(`$`(TEST_AREA_OPTION_SELECTOR).eq(0).`val`().toString())
 
         onTestAreaChange()
     }
 
+    /*
+    testArea = codegen/box or diagnostics
+    * */
     fun onTestAreaChange() {
+        println("!!!onTestAreaChange!!! ")
         val testArea = `$`(TEST_AREA_SELECTOR).`val`().toString().apply { if (isEmpty()) return }
-        val tests = currentSentenceTests[testArea] ?: return
+        println("!!!testArea = " + testArea)
+        val tests = currentSentenceTests.getTestsByTestArea(testArea) ?: return
         val testTypes = mapOf("pos" to "Positive", "neg" to "Negative")
 
         //TODO: fix appends if test type option is not appended yet
-        tests.keys.reversed().forEach { testType ->
-            `$`(TEST_TYPE_SELECTOR).append(TEST_TYPE_OPTION_TEMPLATE.format(testType, testTypes[testType]
+        tests.forEach { test ->
+            `$`(TEST_TYPE_SELECTOR).append(TEST_TYPE_OPTION_TEMPLATE.format(test.testPath.testType.shortName, test.testPath.testType.name
                     ?: return@forEach))
         }
 
@@ -133,12 +151,15 @@ class SpecTestsViewer {
     fun onTestTypeChange() {
         val testType = `$`(TEST_TYPE_SELECTOR).`val`().toString().apply { if (isEmpty()) return }
         val testArea = `$`(TEST_AREA_SELECTOR).`val`().toString()
-        val tests = currentSentenceTests[testArea]?.get(testType) ?: return
+
+        println("!!!onTestTypeChange!!! ")
+        println("!!!testType = " + testType)
+        println("!!!testArea = " + testArea)
+        val tests = currentSentenceTests.getTestsByTestType(testArea, testType) ?: return
 
         `$`(TEST_NUMBER_SELECTOR).empty()
-        for ((testNumber, test) in tests) {
-            `$`(TEST_NUMBER_SELECTOR).append(TEST_NUMBER_OPTION_TEMPLATE.format(testNumber, test["description"]
-                    ?: continue))
+        tests.forEach { test ->
+            `$`(TEST_NUMBER_SELECTOR).append(TEST_NUMBER_OPTION_TEMPLATE.format(test.testElementInfo.testNumber, test.testElementInfo.description))
         }
 
         `$`(TEST_NUMBER_SELECTOR).show().`val`(`$`(TEST_NUMBER_OPTION_SELECTOR).eq(0).`val`().toString())
@@ -150,15 +171,24 @@ class SpecTestsViewer {
         val testNumber = `$`(TEST_NUMBER_SELECTOR).`val`().toString().apply { if (isEmpty()) return }
         val testArea = `$`(TEST_AREA_SELECTOR).`val`().toString()
         val testType = `$`(TEST_TYPE_SELECTOR).`val`().toString()
-        val tests = currentSentenceTests[testArea]?.get(testType)?.get(testNumber) ?: return
 
-        if (tests["helpers"] != null) {
-            getHelpers(tests["helpers"].unsafeCast<List<String>>()).then {
-                showTestCaseCode(tests, it.toList())
-            }
-        } else {
-            showTestCaseCode(tests)
-        }
+        println("!!!onTestNumberChange!!! ")
+        println("!!!testType = " + testType)
+        println("!!!testArea = " + testArea)
+        println("!!!testNumber = " + testNumber)
+
+        val tests = currentSentenceTests.getTestsByTestNumber(testArea, testType, testNumber) ?: return
+
+        /* if (tests["helpers"] != null) {
+             getHelpers(tests["helpers"].unsafeCast<List<String>>()).then {
+                 showTestCaseCode(tests, it.toList())
+             } todo
+         } else {
+             showTestCaseCode(tests)
+         }*/
+
+        showTestCaseCode(tests)
+
     }
 
     fun navigateTestCase(navigationLink: JQuery, navigationType: NavigationType) {
@@ -167,20 +197,22 @@ class SpecTestsViewer {
         val testArea = `$`(TEST_AREA_SELECTOR).`val`().toString()
         val testType = `$`(TEST_TYPE_SELECTOR).`val`().toString()
         val testNumber = `$`(TEST_NUMBER_SELECTOR).`val`().toString()
-        val tests = currentSentenceTests[testArea]?.get(testType)?.get(testNumber) ?: return
+        val tests = currentSentenceTests.getTestsByTestNumber(testArea,testType,testNumber) ?: return
         val currentNumber = `$`(TESTCASE_NUMBER_SELECTOR).text().toInt()
         val targetTestCase = if (navigationType == NavigationType.PREV) currentNumber - 2 else currentNumber
-        val testCases = tests["cases"].unsafeCast<List<Map<String, String>>>()
+        val testCases = tests.testContainer.testCases
 
         `$`(TESTCASE_NUMBER_SELECTOR).html((targetTestCase + 1).toString())
 
-        if (tests["helpers"] != null) {
-            getHelpers(tests["helpers"].unsafeCast<List<String>>()).then {
-                insertCode(testCases[targetTestCase], it.toList())
-            }
-        } else {
-            insertCode(testCases[targetTestCase])
-        }
+//        if (tests["helpers"] != null) {
+//            getHelpers(tests["helpers"].unsafeCast<List<String>>()).then {
+//                insertCode(testCases[targetTestCase], it.toList())
+//            } //todo
+//        } else {
+//            insertCode(testCases[targetTestCase])
+//        }
+
+        insertCode(testCases [targetTestCase])
 
         if (targetTestCase + 1 >= testCases.size) {
             `$`(NEXT_TESTCASE_SELECTOR).addClass("disabled")

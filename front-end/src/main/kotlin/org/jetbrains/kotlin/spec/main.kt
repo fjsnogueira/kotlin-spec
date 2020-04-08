@@ -6,7 +6,6 @@ import org.jetbrains.kotlin.spec.links.SpecPlaceHighlighter
 import org.jetbrains.kotlin.spec.tests.NavigationType
 import org.jetbrains.kotlin.spec.tests.SpecTestsLoader
 import org.jetbrains.kotlin.spec.tests.SpecTestsViewer
-import org.jetbrains.kotlin.spec.tests.loaders.GithubTestsLoaderType
 import org.jetbrains.kotlin.spec.utils.format
 import org.jetbrains.kotlin.spec.utils.searchMap
 import kotlin.browser.document
@@ -14,13 +13,12 @@ import kotlin.browser.localStorage
 import kotlin.browser.window
 
 fun runAfterDocumentReady() {
-    val specTestsLoader = SpecTestsLoader(GithubTestsLoaderType.USING_TESTS_MAP_FILE)
+    val specTestsLoader = SpecTestsLoader()
     val specTestsViewer = SpecTestsViewer()
     val shouldBeShowedMarkup = localStorage.getItem("showMarkup") != null
     val sentenceToBeHighlighted = window.location.searchMap["sentence"]
     val paragraphToBeHighlighted = window.location.searchMap["paragraph"]
     val sectionToBeHighlighted = window.location.hash
-
     `$`("h3, h4, h5").each { _, el ->
         SpecTestsLoader.insertLoadIcon(`$`(el))
     }

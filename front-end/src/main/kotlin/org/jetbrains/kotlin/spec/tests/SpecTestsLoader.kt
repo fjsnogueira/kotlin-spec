@@ -2,18 +2,17 @@ package org.jetbrains.kotlin.spec.tests
 
 import js.externals.jquery.JQuery
 import js.externals.jquery.`$`
-import org.jetbrains.kotlin.spec.tests.loaders.*
-import org.jetbrains.kotlin.spec.utils.TestArea
+import org.jetbrains.kotlin.spec.MarkUp
+import org.jetbrains.kotlin.spec.SpecConfig
+import org.jetbrains.kotlin.spec.entities.SectionTestSet
+import org.jetbrains.kotlin.spec.tests.loaders.GithubTestsLoader
+import org.jetbrains.kotlin.spec.tests.loaders.LoaderByTestsMapFile
 import org.jetbrains.kotlin.spec.utils.format
-import org.jetbrains.kotlin.spec.utils.setValueByObjectPath
 import kotlin.browser.window
 
-class SpecTestsLoader(loadType: GithubTestsLoaderType) {
-    private val loader = when (loadType) {
-        GithubTestsLoaderType.DIRECTLY -> DirectLoader()
-        GithubTestsLoaderType.USING_API -> LoaderByGithubApi()
-        GithubTestsLoaderType.USING_TESTS_MAP_FILE -> LoaderByTestsMapFile()
-    }
+class SpecTestsLoader() {
+    private val loader = LoaderByTestsMapFile()
+
 
     companion object {
         private const val EXCEPTED_SELECTORS = ".grammar-rule"
@@ -35,6 +34,7 @@ class SpecTestsLoader(loadType: GithubTestsLoaderType) {
                 <a href="#" data-id="${headerElement.attr("id")}" data-type="${headerElement.prop("tagName").toString().toLowerCase()}" class="load-tests" title="Show tests coverage">Load tests</a>
             """)
         }
+
 
         fun getParagraphsInfo(sectionElement: JQuery): List<Map<String, Any>>? {
             var nextSibling = sectionElement.get().run {
@@ -88,7 +88,7 @@ class SpecTestsLoader(loadType: GithubTestsLoaderType) {
                     add(sectionElement.attr("id"))
                 }
 
-                TestsCoverageColorsArranger.showCoverage(paragraphsInfo, mapOf(), sectionsPath.joinToString(", "))
+                MarkUp.showMarkUpForParagraphs(paragraphsInfo, sectionsPath.joinToString(", "))
             }
         }
 
@@ -113,43 +113,25 @@ class SpecTestsLoader(loadType: GithubTestsLoaderType) {
             return nestedSectionIds
         }
 
-        fun loadHelperFile(helperName: String) =
-                GithubTestsLoader.loadFileFromRawGithub(
-                        "$helperName.kt",
-                        testType = GithubTestsLoader.TestFileType.SPEC_TEST,
-                        customFolder = "helpers"
-                )
+//        fun loadHelperFile(helperName: String) =
+//                GithubTestsLoader.loadFileFromRawGithub(
+//                        "$helperName.kt",
+//                        testType = GithubTestsLoader.TestFileType.SPEC_TEST,
+//                        customFolder = "helpers"
+//                )
 
         fun parseTestFiles(
-                responses: Array<out Map<String, Any>>,
+                sectionTestSet: SectionTestSet,
                 currentSection: String,
                 sectionsPath: List<String>,
                 paragraphsInfo: List<Map<String, Any>>
         ) {
+            println("parseTestFiles!!")
             val pathPrefix = "${sectionsPath.joinToString(SECTION_PATH_SEPARATOR)}$SECTION_PATH_SEPARATOR$currentSection"
-            val testsScope = mutableMapOf(
-                    TestArea.DIAGNOSTICS to getTestsByTestTypeInfo(responses, TestArea.DIAGNOSTICS),
-                    TestArea.CODEGEN_BOX to getTestsByTestTypeInfo(responses, TestArea.CODEGEN_BOX))
-            TestsCoverageColorsArranger.showCoverage(paragraphsInfo, testsScope, pathPrefix)
+
+            TestsCoverageColorsArranger.showCoverageOfParagraphs(paragraphsInfo, sectionTestSet, pathPrefix)
         }
 
-        /**
-         * @param responses
-         * @param testArea diagnostics or box type
-         *
-         * @return Map of tests depends on the testType
-         */
-        private fun getTestsByTestTypeInfo(responses: Array<out Map<String, Any>>, testArea: TestArea): MutableMap<String, Any> {
-            val tests = mutableMapOf<String, Any>()
-            responses.forEach { response ->
-                val objectPath = response[testArea.contentPath]?.toString() ?: return@forEach
-                val parsedTest = response[testArea.content]?.let {
-                    SpecTestsParser.parseSpecTest(response, testArea)
-                } ?: return@forEach
-                setValueByObjectPath(tests, parsedTest, objectPath)
-            }
-            return tests
-        }
 
         fun getParentSectionName(element: JQuery, type: String) = element.prevAll(type).first().attr("id")
 
@@ -163,6 +145,7 @@ class SpecTestsLoader(loadType: GithubTestsLoaderType) {
         }
     }
 
+
     private lateinit var sectionPrevLoaded: String
     private var originalSectionName: String? = null
     private var numberSectionsLoaded = 0
@@ -172,7 +155,7 @@ class SpecTestsLoader(loadType: GithubTestsLoaderType) {
         val paragraphsInfo = getParagraphsInfo(section)
         val nestedSections = getNestedSections(section)
         val sectionName = section.attr("id")
-        val sectionsPath = mutableListOf(getParentSectionName(section, "h2"))
+        val sectionsPath = mutableListOf(getParentSectionName(section, "h2")) //what is the purpose?
 
         if (originalSectionName == null) {
             originalSectionName = sectionName
@@ -188,9 +171,18 @@ class SpecTestsLoader(loadType: GithubTestsLoaderType) {
             sectionsPath.add(getParentSectionName(section, "h4"))
         }
 
-        loader.loadTestFiles(sectionName, sectionsPath, paragraphsInfo!!)
-                .then { testFileContents ->
-                    parseTestFiles(testFileContents, sectionName, sectionsPath, paragraphsInfo)
+        //println("link.data(\"type\")-->${link.data("type")}\nsectionsPath:-->" + sectionsPath.toString())
+        loader.loadTestFilesForSectionByTestMapsNew(sectionName, sectionsPath, SpecConfig.testAreasToLoad)
+                .then { sectionTestSet ->
+//                    println("sectionTestSet.loadedTestAreas.size = "+sectionTestSet.loadedTestAreas.size)
+//                    sectionTestSet.loadedTestAreas.forEach { testArea ->
+//                        println("testArea=${testArea.key.path}")
+//                        println("testArea.value.size=${testArea.value.size}")
+//                    }
+
+                    if (paragraphsInfo != null)
+                        parseTestFiles(sectionTestSet, sectionName, sectionsPath, paragraphsInfo)
+
                     link.html("Reload tests")
 
                     if (originalSectionName == sectionName) {
